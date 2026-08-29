@@ -167,6 +167,14 @@ class TokenBucketRateLimiter(BaseRateLimiter, BaseModel):
             )
         return wait
 
+    def _check_capacity(self, num_tokens: int) -> None:
+        """Raise if *num_tokens* can never fit in the token budget."""
+        if self.tokens_per_minute is not None and num_tokens > self._token_max_tokens:
+            raise ValueError(
+                f"Request of {num_tokens} tokens exceeds the tokens_per_minute "
+                f"limit of {self._token_max_tokens:g} and can never be granted."
+            )
+
     def _consume(self, num_tokens: int = 0) -> None:
         """
         Consume one request token and *num_tokens* LLM tokens.
@@ -186,7 +194,11 @@ class TokenBucketRateLimiter(BaseRateLimiter, BaseModel):
             num_tokens: Estimated token count for this request.  Only
                 consulted when ``tokens_per_minute`` is configured.
 
+        Raises:
+            ValueError: If ``num_tokens`` exceeds ``tokens_per_minute``.
+
         """
+        self._check_capacity(num_tokens)
         while True:
             with self._lock:
                 self._refill()
@@ -204,7 +216,11 @@ class TokenBucketRateLimiter(BaseRateLimiter, BaseModel):
             num_tokens: Estimated token count for this request.  Only
                 consulted when ``tokens_per_minute`` is configured.
 
+        Raises:
+            ValueError: If ``num_tokens`` exceeds ``tokens_per_minute``.
+
         """
+        self._check_capacity(num_tokens)
         while True:
             with self._lock:
                 self._refill()
@@ -350,6 +366,17 @@ class SlidingWindowRateLimiter(BaseRateLimiter, BaseModel):
                         break
         return wait
 
+    def _check_capacity(self, num_tokens: int) -> None:
+        """Raise if *num_tokens* can never fit in the sliding window budget."""
+        if self.tokens_per_minute is None:
+            return
+        allowed_tokens = self.tokens_per_minute + self.token_burst
+        if num_tokens > allowed_tokens:
+            raise ValueError(
+                f"Request of {num_tokens} tokens exceeds the sliding window "
+                f"limit of {allowed_tokens:g} tokens and can never be granted."
+            )
+
     def _record_usage(self, now: float, num_tokens: int = 0) -> None:
         """Record one request and optional token usage. Hold _lock."""
         if self.requests_per_minute is not None:
@@ -365,7 +392,12 @@ class SlidingWindowRateLimiter(BaseRateLimiter, BaseModel):
             num_tokens: Estimated token count for this request.  Only
                 consulted when ``tokens_per_minute`` is configured.
 
+        Raises:
+            ValueError: If ``num_tokens`` exceeds ``tokens_per_minute``
+                plus ``token_burst``.
+
         """
+        self._check_capacity(num_tokens)
         while True:
             now = time.monotonic()
             with self._lock:
@@ -385,7 +417,12 @@ class SlidingWindowRateLimiter(BaseRateLimiter, BaseModel):
             num_tokens: Estimated token count for this request.  Only
                 consulted when ``tokens_per_minute`` is configured.
 
+        Raises:
+            ValueError: If ``num_tokens`` exceeds ``tokens_per_minute``
+                plus ``token_burst``.
+
         """
+        self._check_capacity(num_tokens)
         while True:
             now = time.monotonic()
             with self._lock:

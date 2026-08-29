@@ -499,3 +499,54 @@ def test_sliding_window_embedding_calls_acquire() -> None:
     embed = MockEmbedding(embed_dim=8, rate_limiter=rl)
     result = embed.get_text_embedding("test")
     assert len(result) == 8
+
+
+# ---------------------------------------------------------------------------
+# Requests larger than the token budget
+# ---------------------------------------------------------------------------
+
+
+def test_token_bucket_rejects_request_larger_than_tpm() -> None:
+    """A request larger than the bucket can never be granted, so it raises."""
+    rl = TokenBucketRateLimiter(tokens_per_minute=100)
+    with pytest.raises(ValueError, match="can never be granted"):
+        rl.acquire(num_tokens=150)
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_async_rejects_request_larger_than_tpm() -> None:
+    rl = TokenBucketRateLimiter(tokens_per_minute=100)
+    with pytest.raises(ValueError, match="can never be granted"):
+        await rl.async_acquire(num_tokens=150)
+
+
+def test_token_bucket_allows_request_equal_to_tpm() -> None:
+    rl = TokenBucketRateLimiter(tokens_per_minute=100)
+    rl.acquire(num_tokens=100)
+    assert rl._token_tokens == pytest.approx(0.0, abs=1e-3)
+
+
+def test_sliding_window_rejects_request_larger_than_tpm() -> None:
+    """An over-cap request must raise instead of being silently recorded."""
+    rl = SlidingWindowRateLimiter(tokens_per_minute=100)
+    rl.acquire(num_tokens=50)
+    with pytest.raises(ValueError, match="can never be granted"):
+        rl.acquire(num_tokens=200)
+    assert rl._current_token_usage() == 50.0
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_async_rejects_request_larger_than_tpm() -> None:
+    rl = SlidingWindowRateLimiter(tokens_per_minute=100)
+    with pytest.raises(ValueError, match="can never be granted"):
+        await rl.async_acquire(num_tokens=200)
+    assert rl._current_token_usage() == 0.0
+
+
+def test_sliding_window_token_burst_counts_toward_capacity() -> None:
+    """token_burst raises the ceiling for a single request."""
+    rl = SlidingWindowRateLimiter(tokens_per_minute=100, token_burst=100)
+    rl.acquire(num_tokens=200)
+    assert rl._current_token_usage() == 200.0
+    with pytest.raises(ValueError, match="can never be granted"):
+        rl.acquire(num_tokens=201)
