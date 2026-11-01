@@ -238,6 +238,68 @@ class SimpleVectorStoreTest(unittest.TestCase):
         # Only the nodes with rank "c" should remain.
         self.assertEqual(len(result.ids), 2)
 
+    def test_query_with_nested_filters_returns_matches(self) -> None:
+        simple_vector_store = SimpleVectorStore()
+        simple_vector_store.add(_node_embeddings_for_test())
+
+        # rank == "a" OR (rank == "c" AND weight > 2)
+        filters = MetadataFilters(
+            filters=[
+                MetadataFilter(key="rank", operator=FilterOperator.EQ, value="a"),
+                MetadataFilters(
+                    filters=[
+                        MetadataFilter(
+                            key="rank", operator=FilterOperator.EQ, value="c"
+                        ),
+                        MetadataFilter(
+                            key="weight", operator=FilterOperator.GT, value=2.0
+                        ),
+                    ],
+                    condition=FilterCondition.AND,
+                ),
+            ],
+            condition=FilterCondition.OR,
+        )
+        query = VectorStoreQuery(
+            query_embedding=[1.0, 1.0],
+            filters=filters,
+            similarity_top_k=3,
+        )
+        result = simple_vector_store.query(query)
+        assert result.ids is not None
+        self.assertEqual(
+            set(result.ids), {_NODE_ID_WEIGHT_1_RANK_A, _NODE_ID_WEIGHT_3_RANK_C}
+        )
+
+    def test_delete_nodes_with_nested_filters(self) -> None:
+        simple_vector_store = SimpleVectorStore()
+        simple_vector_store.add(_node_embeddings_for_test())
+
+        # Delete rank == "c" AND (weight < 2.5 OR quality contains "high")
+        filters = MetadataFilters(
+            filters=[
+                MetadataFilter(key="rank", operator=FilterOperator.EQ, value="c"),
+                MetadataFilters(
+                    filters=[
+                        MetadataFilter(
+                            key="weight", operator=FilterOperator.LT, value=2.5
+                        ),
+                        MetadataFilter(
+                            key="quality", operator=FilterOperator.ALL, value=["high"]
+                        ),
+                    ],
+                    condition=FilterCondition.OR,
+                ),
+            ],
+            condition=FilterCondition.AND,
+        )
+        simple_vector_store.delete_nodes(filters=filters)
+
+        query = VectorStoreQuery(query_embedding=[1.0, 1.0], similarity_top_k=3)
+        result = simple_vector_store.query(query)
+        assert result.ids is not None
+        self.assertEqual(set(result.ids), {_NODE_ID_WEIGHT_1_RANK_A})
+
     def test_query_with_equal_filter_returns_matches(self) -> None:
         simple_vector_store = SimpleVectorStore()
         simple_vector_store.add(_node_embeddings_for_test())

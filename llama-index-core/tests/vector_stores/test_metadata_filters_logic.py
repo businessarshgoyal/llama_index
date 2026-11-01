@@ -187,19 +187,145 @@ def test_text_match_insensitive_requires_string_values() -> None:
         fn("n1")
 
 
-def test_nested_metadata_filters_raise_error() -> None:
+def _matching_ids(filters: MetadataFilters) -> set:
+    fn = build_metadata_filter_fn(_METADATA_BY_ID.__getitem__, filters)
+    return {node_id for node_id in _METADATA_BY_ID if fn(node_id)}
+
+
+def test_nested_metadata_filters_single_level() -> None:
     inner = MetadataFilters(
         filters=[
             MetadataFilter(key="rank", operator=FilterOperator.EQ, value="a"),
         ]
     )
-    outer = MetadataFilters(
-        filters=[inner],
+    outer = MetadataFilters(filters=[inner], condition=FilterCondition.AND)
+
+    assert _matching_ids(outer) == {"n1"}
+
+
+def test_nested_metadata_filters_or_of_ands() -> None:
+    # (rank == "a" AND weight < 2) OR (rank == "c" AND weight >= 3)
+    filters = MetadataFilters(
+        filters=[
+            MetadataFilters(
+                filters=[
+                    MetadataFilter(key="rank", operator=FilterOperator.EQ, value="a"),
+                    MetadataFilter(key="weight", operator=FilterOperator.LT, value=2.0),
+                ],
+                condition=FilterCondition.AND,
+            ),
+            MetadataFilters(
+                filters=[
+                    MetadataFilter(key="rank", operator=FilterOperator.EQ, value="c"),
+                    MetadataFilter(
+                        key="weight", operator=FilterOperator.GTE, value=3.0
+                    ),
+                ],
+                condition=FilterCondition.AND,
+            ),
+        ],
+        condition=FilterCondition.OR,
+    )
+
+    assert _matching_ids(filters) == {"n1", "n3"}
+
+
+def test_nested_metadata_filters_mixed_with_flat_filter() -> None:
+    # weight > 1 AND (tags contains "beta" OR tags is empty)
+    filters = MetadataFilters(
+        filters=[
+            MetadataFilter(key="weight", operator=FilterOperator.GT, value=1.0),
+            MetadataFilters(
+                filters=[
+                    MetadataFilter(
+                        key="tags", operator=FilterOperator.CONTAINS, value="beta"
+                    ),
+                    MetadataFilter(
+                        key="tags", operator=FilterOperator.IS_EMPTY, value=None
+                    ),
+                ],
+                condition=FilterCondition.OR,
+            ),
+        ],
         condition=FilterCondition.AND,
     )
-    fn = build_metadata_filter_fn(_METADATA_BY_ID.__getitem__, outer)
 
-    # Nested MetadataFilters are not supported and should raise an error
-    # when the filter function is evaluated.
-    with pytest.raises(ValueError, match="Nested MetadataFilters are not supported"):
-        fn("n1")
+    assert _matching_ids(filters) == {"n2", "n3"}
+
+
+def test_nested_metadata_filters_not_condition() -> None:
+    # NOT (rank == "a" OR rank == "b")
+    filters = MetadataFilters(
+        filters=[
+            MetadataFilters(
+                filters=[
+                    MetadataFilter(key="rank", operator=FilterOperator.EQ, value="a"),
+                    MetadataFilter(key="rank", operator=FilterOperator.EQ, value="b"),
+                ],
+                condition=FilterCondition.OR,
+            ),
+        ],
+        condition=FilterCondition.NOT,
+    )
+
+    assert _matching_ids(filters) == {"n3"}
+
+
+def test_nested_metadata_filters_inner_condition_defaults_to_and() -> None:
+    inner = MetadataFilters(
+        filters=[
+            MetadataFilter(key="rank", operator=FilterOperator.EQ, value="b"),
+            MetadataFilter(key="weight", operator=FilterOperator.EQ, value=2.0),
+        ],
+        condition=None,
+    )
+    outer = MetadataFilters(filters=[inner], condition=FilterCondition.OR)
+
+    assert _matching_ids(outer) == {"n2"}
+
+
+def test_nested_metadata_filters_three_levels() -> None:
+    # rank != "c" AND (identifier text_match "abc" OR (weight == 1 AND tags contains "alpha"))
+    filters = MetadataFilters(
+        filters=[
+            MetadataFilter(key="rank", operator=FilterOperator.NE, value="c"),
+            MetadataFilters(
+                filters=[
+                    MetadataFilter(
+                        key="identifier",
+                        operator=FilterOperator.TEXT_MATCH,
+                        value="abc",
+                    ),
+                    MetadataFilters(
+                        filters=[
+                            MetadataFilter(
+                                key="weight", operator=FilterOperator.EQ, value=1.0
+                            ),
+                            MetadataFilter(
+                                key="tags",
+                                operator=FilterOperator.CONTAINS,
+                                value="alpha",
+                            ),
+                        ],
+                        condition=FilterCondition.AND,
+                    ),
+                ],
+                condition=FilterCondition.OR,
+            ),
+        ],
+        condition=FilterCondition.AND,
+    )
+
+    assert _matching_ids(filters) == {"n1", "n2"}
+
+
+def test_empty_nested_metadata_filters() -> None:
+    filters = MetadataFilters(
+        filters=[
+            MetadataFilter(key="rank", operator=FilterOperator.EQ, value="a"),
+            MetadataFilters(filters=[], condition=FilterCondition.AND),
+        ],
+        condition=FilterCondition.AND,
+    )
+
+    assert _matching_ids(filters) == {"n1"}
